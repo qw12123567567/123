@@ -1,0 +1,10 @@
+data/device-ledger.sqlite*
+node_modules/
+tests/data-*/
+tests/production-data-*/
+tests/last-results.json
+data/*.log
+data/uploads/*
+data/backups/*
+!data/uploads/.gitkeep
+!data/backups/.gitkeep
