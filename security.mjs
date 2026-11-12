@@ -130,9 +130,9 @@ export function audit(req,user,action,objectType,objectId,summary,oldValue=null,
 export function randomToken(bytes=32) { return crypto.randomBytes(bytes).toString('hex'); }
 
 export function clientIp(req) {
-  const remote = req.socket.remoteAddress || '';
-  if (process.env.TRUST_PROXY !== '1') return remote;
-  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',').at(-1).trim();
+  const remote = req.socket?.remoteAddress || req.connection?.remoteAddress || '';
+  if (process.env.TRUST_PROXY !== '1' && !process.env.VERCEL) return remote;
+  const forwarded = String(req.headers?.['x-forwarded-for'] || '').split(',').at(-1).trim();
   return isIP(forwarded) ? forwarded : remote;
 }
 
