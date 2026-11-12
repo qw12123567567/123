@@ -60,6 +60,7 @@ const port=Number(process.env.PORT||4173);const host=process.env.HOST||(process.
 if(!process.env.VERCEL)server.listen(port,host,()=>console.log(`设备台账管理系统已启动：http://${host}:${port}`));
 let backupDate='';
 async function scheduledBackup(){
+  db.prepare('DELETE FROM attachment_upload_sessions WHERE expires_at<?').run(new Date().toISOString());
   const current=new Date();const today=new Date(current.getTime()-current.getTimezoneOffset()*60000).toISOString().slice(0,10);if(current.getHours()<2||backupDate===today)return;
   const existing=await listBackups();if(!existing.some((entry)=>entry.fileName.startsWith(`device-ledger-${today}`)))await createBackup();
   backupDate=today;await pruneBackups();await sendReminderDigest();

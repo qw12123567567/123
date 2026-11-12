@@ -263,11 +263,21 @@ function bindDetailActions(item){
 function openUpload(item){
   openDialog('上传说明书 / 附件',`${item.code} · 支持多选，单文件不超过${attachmentLimitMB}MB`,`<form id="upload-form" class="form-grid"><label>附件类型<select name="type"><option>说明书</option><option>合格证</option><option>验收单</option><option>照片</option><option>维修记录</option><option>合同</option><option>发票</option><option>供应商报价</option><option>其他</option></select></label><label>选择文件<input name="file" type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.txt,.xlsx" multiple required></label><p class="wide field-help">PDF、Word、PNG/JPG、Excel或TXT。上传成功后可在设备附件资料中查找。</p><p id="upload-progress" class="wide field-help" role="status"></p></form>`,`<button class="button" id="cancel-upload">返回设备资料</button><button class="button primary" id="save-upload">上传</button>`);
   $('#cancel-upload').addEventListener('click',()=>openDevice(item.id,'attachments'));
-  $('#save-upload').addEventListener('click',async(event)=>{const files=[...$('[name="file"]','#upload-form').files];if(!files.length)return toast('请选择附件','error');const type=$('[name="type"]','#upload-form').value;event.currentTarget.disabled=true;$('#cancel-upload').disabled=true;try{files.forEach(validateUploadFile);for(let index=0;index<files.length;index++){const file=files[index];$('#upload-progress').textContent=`正在上传 ${index+1}/${files.length}：${file.name}`;await uploadDeviceFile(item.id,file,type);}toast(`${files.length}个附件上传成功`);await openDevice(item.id,'attachments');}catch(error){toast(error.message,'error');$('#save-upload').disabled=false;$('#cancel-upload').disabled=false;}});
+  $('#save-upload').addEventListener('click',async(event)=>{const files=[...$('[name="file"]','#upload-form').files];if(!files.length)return toast('请选择附件','error');const type=$('[name="type"]','#upload-form').value;event.currentTarget.disabled=true;$('#cancel-upload').disabled=true;try{files.forEach(validateUploadFile);for(let index=0;index<files.length;index++){const file=files[index];$('#upload-progress').textContent=`正在上传 ${index+1}/${files.length}：${file.name}`;await uploadDeviceFile(item.id,file,type,(part,total)=>{$('#upload-progress').textContent=`正在上传 ${index+1}/${files.length}：${file.name}（${part}/${total}）`;});}toast(`${files.length}个附件上传成功`);await openDevice(item.id,'attachments');}catch(error){toast(error.message,'error');$('#save-upload').disabled=false;$('#cancel-upload').disabled=false;}});
 }
 const UPLOAD_MIMES={pdf:'application/pdf',doc:'application/msword',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',txt:'text/plain',xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'};
 function validateUploadFile(file){const extension=file.name.split('.').at(-1).toLowerCase();if(!UPLOAD_MIMES[extension])throw new Error(`不支持的文件类型：${file.name}`);if(!file.size||file.size>attachmentLimitMB*1024*1024)throw new Error(`文件必须非空且不超过${attachmentLimitMB}MB：${file.name}`);}
-async function uploadDeviceFile(deviceId,file,type='说明书',fieldCode=null){validateUploadFile(file);const extension=file.name.split('.').at(-1).toLowerCase();return await request(`/api/devices/${deviceId}/attachments`,{method:'POST',body:{type,fieldCode,fileName:file.name,mimeType:UPLOAD_MIMES[extension],dataBase64:await fileToBase64(file)}});}
+async function uploadDeviceFile(deviceId,file,type='说明书',fieldCode=null,onProgress=()=>{}){
+  validateUploadFile(file);
+  const route=`/api/devices/${deviceId}/attachments`;
+  const upload=await request(route,{method:'POST',body:{uploadAction:'start',type,fieldCode,fileName:file.name,size:file.size}});
+  for(let chunkIndex=0,offset=0;offset<file.size;chunkIndex++,offset+=upload.chunkSize){
+    const chunk=file.slice(offset,Math.min(offset+upload.chunkSize,file.size));
+    await request(route,{method:'POST',body:{uploadAction:'chunk',uploadId:upload.uploadId,chunkIndex,dataBase64:await fileToBase64(chunk)}});
+    onProgress(chunkIndex+1,upload.chunkCount);
+  }
+  return request(route,{method:'POST',body:{uploadAction:'complete',uploadId:upload.uploadId}});
+}
 function fileToBase64(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=reject;reader.readAsDataURL(file);});}
 
 function inputField(label,name,value='',type='text',extra=''){return `<label>${label}<input name="${name}" type="${type}" value="${escapeHtml(value??'')}" ${extra}></label>`;}

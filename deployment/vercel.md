@@ -22,7 +22,7 @@ On the first production request, the application creates a clean schema and the 
 
 ## Attachments and backups
 
-Vercel's request body limit is smaller than the local server's limit, so production attachments are capped at 3 MB. Cloud backups are encrypted with AES-256-GCM and retained for 30 days. Vercel runs the backup route daily at 02:00 China Standard Time.
+Production attachments can be up to 50 MB. The browser sends 2 MB chunks, keeping each Base64 JSON request below Vercel Functions' 4.5 MB request-body limit. Unfinished upload sessions expire after one hour. Cloud backups are encrypted with AES-256-GCM and retained for 30 days. Vercel runs the backup route daily at 02:00 China Standard Time.
 
 ## Verification
 

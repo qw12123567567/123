@@ -66,6 +66,13 @@ CREATE TABLE IF NOT EXISTS attachments(
  id INTEGER PRIMARY KEY, device_id INTEGER NOT NULL REFERENCES devices(id), type TEXT NOT NULL,
  file_name TEXT NOT NULL, mime_type TEXT NOT NULL, size INTEGER NOT NULL, storage_name TEXT NOT NULL,
  uploaded_by INTEGER REFERENCES users(id), uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS attachment_upload_sessions(
+ id TEXT PRIMARY KEY, device_id INTEGER NOT NULL REFERENCES devices(id), user_id INTEGER NOT NULL REFERENCES users(id),
+ file_name TEXT NOT NULL, upload_type TEXT NOT NULL, field_code TEXT, expected_size INTEGER NOT NULL,
+ chunk_count INTEGER NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, expires_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS attachment_upload_chunks(
+ session_id TEXT NOT NULL REFERENCES attachment_upload_sessions(id) ON DELETE CASCADE,
+ chunk_index INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(session_id,chunk_index));
 CREATE TABLE IF NOT EXISTS custom_fields(
  id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, field_type TEXT NOT NULL,
  category TEXT DEFAULT '通用', required INTEGER DEFAULT 0, sensitive INTEGER DEFAULT 0,

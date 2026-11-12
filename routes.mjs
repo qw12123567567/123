@@ -6,7 +6,7 @@ import { db,paths,cloudDatabase,PRICE_FIELDS,SENSITIVE_FILE_TYPES,DEVICE_FIELDS 
 import { writeStored,readStored,removeStored } from './storage.mjs';
 import { verifyPassword,verifyTotp,totp,parseCookies,publicUser,scopeClause,canAccessDepartment,descendants,maskDevice,safeJson,audit,randomToken,clientIp,sessionCookie,fieldPermission } from './security.mjs';
 import { json,fail,bodyJson,requireUser,spreadsheet } from './http.mjs';
-import { validateAttachment,previewMimes } from './attachments.mjs';
+import { validateAttachment,validateAttachmentMetadata,MAX_ATTACHMENT_BYTES,UPLOAD_CHUNK_BYTES,previewMimes } from './attachments.mjs';
 import { business,configuration,nextDeviceCode } from './business.mjs';
 import { publicAccount,reminderRows } from './notifications.mjs';
 import { createBackup,listBackups } from './backups.mjs';
@@ -19,6 +19,31 @@ const exportDirectory=path.join(paths.data,'exports');
 await mkdir(exportDirectory,{recursive:true});
 db.exec("CREATE TABLE IF NOT EXISTS export_jobs(id TEXT PRIMARY KEY,user_id INTEGER REFERENCES users(id),status TEXT,fingerprint TEXT,device_ids TEXT,error TEXT,created_at TEXT,expires_at TEXT)");
 if(!cloudDatabase)db.prepare("UPDATE export_jobs SET status='failed',error='服务重启，请重新导出' WHERE status='pending'").run();
+
+function uploadField(user,type,fieldCode){
+  if(SENSITIVE_FILE_TYPES.has(type)&&!user.sensitive_files)throw Object.assign(new Error('无合同/发票附件权限'),{status:403});
+  const field=fieldCode?db.prepare("SELECT * FROM custom_fields WHERE code=? AND status='published'").get(fieldCode):null;
+  if(fieldCode&&(!field||field.field_type!=='attachment'||!fieldPermission(user,field,'edit')))throw Object.assign(new Error('无权上传至该附件字段'),{status:403});
+  return field;
+}
+function uploadSession(user,uploadId){
+  const session=db.prepare('SELECT * FROM attachment_upload_sessions WHERE id=? AND user_id=?').get(uploadId,user.id);
+  if(!session)throw Object.assign(new Error('上传任务不存在或已过期'),{status:404});
+  if(session.expires_at<=now()){db.prepare('DELETE FROM attachment_upload_sessions WHERE id=?').run(session.id);throw Object.assign(new Error('上传任务已过期，请重新选择文件'),{status:410});}
+  if(!user.manage_data||!deviceForUser(session.device_id,user))throw Object.assign(new Error('无附件上传权限'),{status:403});
+  uploadField(user,session.upload_type,session.field_code);
+  return session;
+}
+async function persistAttachment(req,user,device,field,{fileName,mimeType,data,type}){
+  const storage=`${Date.now()}-${randomToken(8)}`;await writeStored('uploads',storage,data);
+  let result;
+  try{
+    result=db.prepare('INSERT INTO attachments(device_id,type,file_name,mime_type,size,storage_name,uploaded_by,field_code) VALUES(?,?,?,?,?,?,?,?)').run(device.id,type,fileName,mimeType,data.length,storage,user.id,field?.code||null);
+    if(field){const custom=safeJson(db.prepare('SELECT custom_data FROM devices WHERE id=?').get(device.id).custom_data,{});custom[field.code]=[...(Array.isArray(custom[field.code])?custom[field.code]:[]),Number(result.lastInsertRowid)];db.prepare('UPDATE devices SET custom_data=?,version=version+1,updated_by=?,updated_at=? WHERE id=?').run(JSON.stringify(custom),user.id,now(),device.id);}
+  }catch(cause){await removeStored('uploads',storage).catch(()=>{});throw cause;}
+  audit(req,user,'upload_attachment','attachment',result.lastInsertRowid,`上传附件：${fileName}`);
+  return Number(result.lastInsertRowid);
+}
 
 function exportFingerprint(user){const account=publicUser(user);delete account.csrfToken;return createHash('sha256').update(JSON.stringify(account)).digest('hex');}
 
@@ -115,7 +140,7 @@ export async function api(req,res,url){
     db.prepare('SELECT 1').get();
     return json(res,200,{status:'ok'});
   }
-  if(req.method==='GET'&&url.pathname==='/api/runtime')return json(res,200,{demo:process.env.APP_ENV!=='production',cloud:cloudDatabase,maxAttachmentBytes:process.env.VERCEL?3*1024*1024:8*1024*1024});
+  if(req.method==='GET'&&url.pathname==='/api/runtime')return json(res,200,{demo:process.env.APP_ENV!=='production',cloud:cloudDatabase,maxAttachmentBytes:MAX_ATTACHMENT_BYTES});
   if(req.method==='GET'&&url.pathname==='/api/reminders'){
     const user=requireUser(req,res);if(!user)return;return json(res,200,{rows:reminderRows(user)});
   }
@@ -225,14 +250,35 @@ export async function api(req,res,url){
   if(attachmentList&&req.method==='POST'){
     if(!user.manage_data)return fail(res,403,'无附件上传权限');
     const device=deviceForUser(Number(attachmentList[1]),user);if(!device)return fail(res,404,'设备不存在或无权访问');const body=await bodyJson(req);
+    if(body.uploadAction==='start'){
+      const metadata=validateAttachmentMetadata(body);const size=Number(body.size);
+      if(!Number.isSafeInteger(size)||size<1||size>MAX_ATTACHMENT_BYTES)return fail(res,400,`附件必须非空且不超过${Math.floor(MAX_ATTACHMENT_BYTES/1024/1024)}MB`);
+      const field=uploadField(user,metadata.type,body.fieldCode||null);const uploadId=randomToken(16);const chunkCount=Math.ceil(size/UPLOAD_CHUNK_BYTES);
+      db.prepare('DELETE FROM attachment_upload_sessions WHERE expires_at<?').run(now());
+      db.prepare('INSERT INTO attachment_upload_sessions(id,device_id,user_id,file_name,upload_type,field_code,expected_size,chunk_count,expires_at) VALUES(?,?,?,?,?,?,?,?,?)').run(uploadId,device.id,user.id,metadata.fileName,metadata.type,field?.code||null,size,chunkCount,new Date(Date.now()+60*60*1000).toISOString());
+      return json(res,201,{uploadId,chunkSize:UPLOAD_CHUNK_BYTES,chunkCount});
+    }
+    if(body.uploadAction==='chunk'){
+      const session=uploadSession(user,String(body.uploadId||''));const chunkIndex=Number(body.chunkIndex);
+      if(!Number.isInteger(chunkIndex)||chunkIndex<0||chunkIndex>=session.chunk_count)return fail(res,400,'上传分块序号无效');
+      if(typeof body.dataBase64!=='string'||!/^[A-Za-z0-9+/]*={0,2}$/.test(body.dataBase64))return fail(res,400,'上传分块内容无效');
+      const data=Buffer.from(body.dataBase64,'base64');const expectedSize=Math.min(UPLOAD_CHUNK_BYTES,session.expected_size-chunkIndex*UPLOAD_CHUNK_BYTES);
+      if(data.length!==expectedSize)return fail(res,400,'上传分块大小不正确');
+      try{db.prepare('INSERT INTO attachment_upload_chunks(session_id,chunk_index,data) VALUES(?,?,?)').run(session.id,chunkIndex,data);}catch{return fail(res,409,'该上传分块已存在，请重新选择文件');}
+      return json(res,200,{ok:true,chunkIndex});
+    }
+    if(body.uploadAction==='complete'){
+      const session=uploadSession(user,String(body.uploadId||''));const chunks=db.prepare('SELECT chunk_index,data FROM attachment_upload_chunks WHERE session_id=? ORDER BY chunk_index').all(session.id);
+      if(chunks.length!==session.chunk_count||chunks.some((chunk,index)=>chunk.chunk_index!==index))return fail(res,409,'附件尚未全部上传');
+      const data=Buffer.concat(chunks.map((chunk)=>Buffer.from(chunk.data)));
+      if(data.length!==session.expected_size)return fail(res,400,'附件大小校验失败');
+      const validated=validateAttachment({fileName:session.file_name,type:session.upload_type,data},{maxBytes:MAX_ATTACHMENT_BYTES});
+      const field=uploadField(user,session.upload_type,session.field_code);const id=await persistAttachment(req,user,device,field,validated);
+      db.prepare('DELETE FROM attachment_upload_sessions WHERE id=?').run(session.id);
+      return json(res,201,{id});
+    }
     const {fileName:name,mimeType,data,type}=validateAttachment(body);
-    if(SENSITIVE_FILE_TYPES.has(type)&&!user.sensitive_files)return fail(res,403,'无合同/发票附件权限');
-    const field=body.fieldCode?db.prepare("SELECT * FROM custom_fields WHERE code=? AND status='published'").get(body.fieldCode):null;
-    if(body.fieldCode&&(!field||field.field_type!=='attachment'||!fieldPermission(user,field,'edit')))return fail(res,403,'无权上传至该附件字段');
-    const storage=`${Date.now()}-${randomToken(8)}`;await writeStored('uploads',storage,data);
-    let result;
-    try{result=db.prepare('INSERT INTO attachments(device_id,type,file_name,mime_type,size,storage_name,uploaded_by,field_code) VALUES(?,?,?,?,?,?,?,?)').run(device.id,type,name,mimeType,data.length,storage,user.id,field?.code||null);if(field){const custom=safeJson(db.prepare('SELECT custom_data FROM devices WHERE id=?').get(device.id).custom_data,{});custom[field.code]=[...(Array.isArray(custom[field.code])?custom[field.code]:[]),Number(result.lastInsertRowid)];db.prepare('UPDATE devices SET custom_data=?,version=version+1,updated_by=?,updated_at=? WHERE id=?').run(JSON.stringify(custom),user.id,now(),device.id);}}catch(cause){await removeStored('uploads',storage).catch(()=>{});throw cause;}
-    audit(req,user,'upload_attachment','attachment',result.lastInsertRowid,`上传附件：${name}`);return json(res,201,{id:Number(result.lastInsertRowid)});
+    const field=uploadField(user,type,body.fieldCode||null);const id=await persistAttachment(req,user,device,field,{fileName:name,mimeType,data,type});return json(res,201,{id});
   }
 
   const attachmentMatch=url.pathname.match(/^\/api\/attachments\/(\d+)(?:\/(download|preview))?$/);

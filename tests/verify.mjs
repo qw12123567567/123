@@ -55,6 +55,12 @@ try{
   const detail=await api(`/api/devices/${created.id}`);
   assert.equal(detail.attachments.length,1);
   passed.push('DOM点击新增设备，并同步上传PDF说明书');
+  const largePdf=Buffer.alloc(3*1024*1024+137,0x61);largePdf.set(Buffer.from('%PDF-1.4\n'));
+  const uploadStart=await api(`/api/devices/${created.id}/attachments`,{method:'POST',headers:{'X-CSRF-Token':win.ledgerTest.state.user.csrfToken},body:{uploadAction:'start',type:'说明书',fileName:'大于3MB.pdf',size:largePdf.length}});
+  for(let offset=0,index=0;offset<largePdf.length;offset+=uploadStart.chunkSize,index++)await api(`/api/devices/${created.id}/attachments`,{method:'POST',headers:{'X-CSRF-Token':win.ledgerTest.state.user.csrfToken},body:{uploadAction:'chunk',uploadId:uploadStart.uploadId,chunkIndex:index,dataBase64:largePdf.subarray(offset,offset+uploadStart.chunkSize).toString('base64')}});
+  const largeAttachment=await api(`/api/devices/${created.id}/attachments`,{method:'POST',headers:{'X-CSRF-Token':win.ledgerTest.state.user.csrfToken},body:{uploadAction:'complete',uploadId:uploadStart.uploadId}});
+  const downloadedLarge=await fetchApi(`/api/attachments/${largeAttachment.id}/download`);assert.equal(downloadedLarge.status,200);assert.equal((await downloadedLarge.arrayBuffer()).byteLength,largePdf.length);
+  passed.push('分块上传超过3MB附件并校验完整下载');
   const preview=await fetchApi(`/api/attachments/${detail.attachments[0].id}/preview`);
   assert.equal(preview.status,200);assert.match(preview.headers.get('content-disposition'),/^inline/);
   assert.ok((await preview.text()).startsWith('%PDF-'));
