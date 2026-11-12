@@ -2,7 +2,8 @@ import { readFile,writeFile,unlink,mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { db,paths,PRICE_FIELDS,SENSITIVE_FILE_TYPES,DEVICE_FIELDS } from './db.mjs';
+import { db,paths,cloudDatabase,PRICE_FIELDS,SENSITIVE_FILE_TYPES,DEVICE_FIELDS } from './db.mjs';
+import { writeStored,readStored,removeStored } from './storage.mjs';
 import { verifyPassword,verifyTotp,totp,parseCookies,publicUser,scopeClause,canAccessDepartment,descendants,maskDevice,safeJson,audit,randomToken,clientIp,sessionCookie,fieldPermission } from './security.mjs';
 import { json,fail,bodyJson,requireUser,spreadsheet } from './http.mjs';
 import { validateAttachment,previewMimes } from './attachments.mjs';
@@ -17,7 +18,7 @@ const localStamp=()=>new Date(Date.now()-new Date().getTimezoneOffset()*60000).t
 const exportDirectory=path.join(paths.data,'exports');
 await mkdir(exportDirectory,{recursive:true});
 db.exec("CREATE TABLE IF NOT EXISTS export_jobs(id TEXT PRIMARY KEY,user_id INTEGER REFERENCES users(id),status TEXT,fingerprint TEXT,device_ids TEXT,error TEXT,created_at TEXT,expires_at TEXT)");
-db.prepare("UPDATE export_jobs SET status='failed',error='服务重启，请重新导出' WHERE status='pending'").run();
+if(!cloudDatabase)db.prepare("UPDATE export_jobs SET status='failed',error='服务重启，请重新导出' WHERE status='pending'").run();
 
 function exportFingerprint(user){const account=publicUser(user);delete account.csrfToken;return createHash('sha256').update(JSON.stringify(account)).digest('hex');}
 
@@ -114,7 +115,7 @@ export async function api(req,res,url){
     db.prepare('SELECT 1').get();
     return json(res,200,{status:'ok'});
   }
-  if(req.method==='GET'&&url.pathname==='/api/runtime')return json(res,200,{demo:process.env.APP_ENV!=='production'});
+  if(req.method==='GET'&&url.pathname==='/api/runtime')return json(res,200,{demo:process.env.APP_ENV!=='production',cloud:cloudDatabase,maxAttachmentBytes:process.env.VERCEL?3*1024*1024:8*1024*1024});
   if(req.method==='GET'&&url.pathname==='/api/reminders'){
     const user=requireUser(req,res);if(!user)return;return json(res,200,{rows:reminderRows(user)});
   }
@@ -140,9 +141,10 @@ export async function api(req,res,url){
   const businessResult=await business(req,res,url,user);if(businessResult!==false)return businessResult;
   if(req.method==='POST'&&url.pathname==='/api/export-jobs'){
     if(!user.export_data)return fail(res,403,'无导出权限');const body=await bodyJson(req);const id=randomToken(16);const query=new URL('/api/export','http://localhost');for(const [key,value] of Object.entries(body.filters||{}))if(value!=null)query.searchParams.set(key,String(value));filters(query,user);
-    for(const expired of db.prepare('SELECT id FROM export_jobs WHERE expires_at<? LIMIT 100').all(now())){await unlink(path.join(exportDirectory,`${expired.id}.xls`)).catch(()=>{});db.prepare('DELETE FROM export_jobs WHERE id=?').run(expired.id);}
+    for(const expired of db.prepare('SELECT id FROM export_jobs WHERE expires_at<? LIMIT 100').all(now())){await removeStored('exports',`${expired.id}.xls`).catch(()=>{});db.prepare('DELETE FROM export_jobs WHERE id=?').run(expired.id);}
     const fingerprint=exportFingerprint(user);db.prepare("INSERT INTO export_jobs(id,user_id,status,fingerprint,created_at,expires_at) VALUES(?,?,'pending',?,?,?)").run(id,user.id,fingerprint,now(),new Date(Date.now()+3600000).toISOString());
-    setImmediate(async()=>{try{const {getUser}=await import('./security.mjs');const current=getUser(req);if(!current?.export_data||exportFingerprint(current)!==fingerprint)throw new Error('权限已变化，请重新发起导出');const result=buildExport(query,current);await writeFile(path.join(exportDirectory,`${id}.xls`),result.xml,{flag:'wx'});db.prepare("UPDATE export_jobs SET status='ready',device_ids=? WHERE id=?").run(JSON.stringify(result.ids),id);audit(req,current,'export','export_job',id,`异步导出设备${result.ids.length}条${result.containsPrice?'（含价格）':''}`);}catch(cause){db.prepare("UPDATE export_jobs SET status='failed',error=? WHERE id=?").run(cause.status?'无权使用该筛选':cause.message,id);}});
+    const runExport=async()=>{try{const {getUser}=await import('./security.mjs');const current=getUser(req);if(!current?.export_data||exportFingerprint(current)!==fingerprint)throw new Error('权限已变化，请重新发起导出');const result=buildExport(query,current);await writeStored('exports',`${id}.xls`,result.xml);db.prepare("UPDATE export_jobs SET status='ready',device_ids=? WHERE id=?").run(JSON.stringify(result.ids),id);audit(req,current,'export','export_job',id,`异步导出设备${result.ids.length}条${result.containsPrice?'（含价格）':''}`);}catch(cause){db.prepare("UPDATE export_jobs SET status='failed',error=? WHERE id=?").run(cause.status?'无权使用该筛选':cause.message,id);}};
+    if(cloudDatabase)await runExport();else setImmediate(runExport);
     return json(res,202,{id,status:'pending'});
   }
   const exportMatch=url.pathname.match(/^\/api\/export-jobs\/([a-f0-9]{32})(?:\/(download))?$/);
@@ -150,7 +152,7 @@ export async function api(req,res,url){
     const job=db.prepare('SELECT * FROM export_jobs WHERE id=? AND user_id=?').get(exportMatch[1],user.id);if(!job||!user.export_data)return fail(res,404,'导出任务不存在');if(new Date(job.expires_at)<new Date())return fail(res,410,'导出文件已过期，请重新导出');if(exportFingerprint(user)!==job.fingerprint)return fail(res,403,'权限已变化，请重新导出');
     if(!exportMatch[2])return json(res,200,{id:job.id,status:job.status,error:job.error});
     if(job.status!=='ready')return fail(res,409,'文件尚未生成');for(const id of safeJson(job.device_ids,[]))if(!deviceForUser(id,user))return fail(res,403,'设备数据范围发生变化，请重新导出');
-    const data=await readFile(path.join(exportDirectory,`${job.id}.xls`));audit(req,user,'download_export','export_job',job.id,'下载台账导出文件');res.writeHead(200,{'Content-Type':'application/vnd.ms-excel; charset=utf-8','Content-Length':data.length,'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(`设备台账-${now().slice(0,10)}.xls`)}`,'Cache-Control':'no-store'});return res.end(data);
+    const data=await readStored('exports',`${job.id}.xls`);audit(req,user,'download_export','export_job',job.id,'下载台账导出文件');res.writeHead(200,{'Content-Type':'application/vnd.ms-excel; charset=utf-8','Content-Length':data.length,'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(`设备台账-${now().slice(0,10)}.xls`)}`,'Cache-Control':'no-store'});return res.end(data);
   }
   if(req.method==='GET'&&url.pathname==='/api/backups'){
     if(user.role_code!=='super_admin')return fail(res,403,'无备份权限');return json(res,200,{rows:await listBackups()});
@@ -227,9 +229,9 @@ export async function api(req,res,url){
     if(SENSITIVE_FILE_TYPES.has(type)&&!user.sensitive_files)return fail(res,403,'无合同/发票附件权限');
     const field=body.fieldCode?db.prepare("SELECT * FROM custom_fields WHERE code=? AND status='published'").get(body.fieldCode):null;
     if(body.fieldCode&&(!field||field.field_type!=='attachment'||!fieldPermission(user,field,'edit')))return fail(res,403,'无权上传至该附件字段');
-    const storage=`${Date.now()}-${randomToken(8)}`;await writeFile(path.join(paths.uploads,storage),data,{flag:'wx'});
+    const storage=`${Date.now()}-${randomToken(8)}`;await writeStored('uploads',storage,data);
     let result;
-    try{result=db.prepare('INSERT INTO attachments(device_id,type,file_name,mime_type,size,storage_name,uploaded_by,field_code) VALUES(?,?,?,?,?,?,?,?)').run(device.id,type,name,mimeType,data.length,storage,user.id,field?.code||null);if(field){const custom=safeJson(db.prepare('SELECT custom_data FROM devices WHERE id=?').get(device.id).custom_data,{});custom[field.code]=[...(Array.isArray(custom[field.code])?custom[field.code]:[]),Number(result.lastInsertRowid)];db.prepare('UPDATE devices SET custom_data=?,version=version+1,updated_by=?,updated_at=? WHERE id=?').run(JSON.stringify(custom),user.id,now(),device.id);}}catch(cause){await unlink(path.join(paths.uploads,storage)).catch(()=>{});throw cause;}
+    try{result=db.prepare('INSERT INTO attachments(device_id,type,file_name,mime_type,size,storage_name,uploaded_by,field_code) VALUES(?,?,?,?,?,?,?,?)').run(device.id,type,name,mimeType,data.length,storage,user.id,field?.code||null);if(field){const custom=safeJson(db.prepare('SELECT custom_data FROM devices WHERE id=?').get(device.id).custom_data,{});custom[field.code]=[...(Array.isArray(custom[field.code])?custom[field.code]:[]),Number(result.lastInsertRowid)];db.prepare('UPDATE devices SET custom_data=?,version=version+1,updated_by=?,updated_at=? WHERE id=?').run(JSON.stringify(custom),user.id,now(),device.id);}}catch(cause){await removeStored('uploads',storage).catch(()=>{});throw cause;}
     audit(req,user,'upload_attachment','attachment',result.lastInsertRowid,`上传附件：${name}`);return json(res,201,{id:Number(result.lastInsertRowid)});
   }
 
@@ -239,7 +241,7 @@ export async function api(req,res,url){
     if(!item||!deviceForUser(item.device_id,user))return fail(res,404,'附件不存在或无权访问');if(SENSITIVE_FILE_TYPES.has(item.type)&&!user.sensitive_files)return fail(res,403,'无合同/发票附件权限');
     if(item.field_code){const field=db.prepare('SELECT * FROM custom_fields WHERE code=?').get(item.field_code);if(!field||field.status!=='published'||!fieldPermission(user,field,'view'))return fail(res,403,'无附件字段查看权限');}
     const preview=attachmentMatch[2]==='preview';if(preview&&!previewMimes.has(item.mime_type))return fail(res,400,'此文件请下载后查看');
-    const file=path.join(paths.uploads,item.storage_name);if(!existsSync(file))return fail(res,404,'附件文件已丢失');const data=await readFile(file);audit(req,user,preview?'preview_attachment':'download_attachment','attachment',item.id,`${preview?'预览':'下载'}附件：${item.file_name}`);
+    const data=await readStored('uploads',item.storage_name);audit(req,user,preview?'preview_attachment':'download_attachment','attachment',item.id,`${preview?'预览':'下载'}附件：${item.file_name}`);
     res.writeHead(200,{'Content-Type':item.mime_type,'Content-Length':data.length,'Content-Disposition':`${preview?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(item.file_name)}`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; frame-ancestors 'self'; sandbox"});return res.end(data);
   }
   if(attachmentMatch&&req.method==='DELETE'){

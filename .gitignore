@@ -8,3 +8,8 @@ data/uploads/*
 data/backups/*
 !data/uploads/.gitkeep
 !data/backups/.gitkeep
+
+.env
+.env.*
+.vercel/
+data/

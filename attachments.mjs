@@ -21,7 +21,7 @@ export function validateAttachment(body){
   const encoded=body.dataBase64;
   if(typeof encoded!=='string'||!encoded.length||!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))throw Object.assign(new Error('附件内容无效'),{status:400});
   const data=Buffer.from(encoded,'base64');
-  if(!data.length||data.length>8*1024*1024)throw Object.assign(new Error('附件必须非空且不超过8MB'),{status:400});
+  if(!data.length||data.length>(process.env.VERCEL?3:8)*1024*1024)throw Object.assign(new Error(`附件必须非空且不超过${process.env.VERCEL?3:8}MB`),{status:400});
   const head=data.subarray(0,1024);
   const valid=extension==='.pdf'?head.includes(Buffer.from('%PDF-')):
     extension==='.doc'?head.subarray(0,8).equals(Buffer.from('d0cf11e0a1b11ae1','hex')):

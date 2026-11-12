@@ -3,9 +3,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import LibsqlDatabase from 'libsql';
+
+if (process.env.VERCEL) process.env.APP_ENV = 'production';
+export const cloudDatabase = Boolean(process.env.TURSO_DATABASE_URL);
+if (process.env.VERCEL && !cloudDatabase) throw new Error('Connect a Turso database before deploying this application.');
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const dataRoot = path.resolve(process.env.DATA_DIR || path.join(root, 'data'));
+const dataRoot = path.resolve(process.env.DATA_DIR || (process.env.VERCEL ? path.join(tmpdir(), 'device-ledger') : path.join(root, 'data')));
 export const paths = {
   root,
   public: path.join(root, 'public'),
@@ -14,10 +20,12 @@ export const paths = {
   backups: path.join(dataRoot, 'backups'),
   database: path.join(dataRoot, 'device-ledger.sqlite'),
 };
-await Promise.all([paths.public, paths.data, paths.uploads, paths.backups].map((value) => mkdir(value, { recursive: true })));
+await Promise.all([paths.data, paths.uploads, paths.backups].map((value) => mkdir(value, { recursive: true })));
 
-export const db = new DatabaseSync(paths.database);
-db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;');
+export const db = cloudDatabase
+  ? new LibsqlDatabase(process.env.TURSO_DATABASE_URL, { authToken: process.env.TURSO_AUTH_TOKEN })
+  : new DatabaseSync(paths.database);
+db.exec(cloudDatabase ? 'PRAGMA foreign_keys=ON;' : 'PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;');
 db.exec(`
 CREATE TABLE IF NOT EXISTS departments(
  id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,

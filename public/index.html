@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>设备台账管理系统</title>
+  <link rel="stylesheet" href="/styles.css?v=1.1.20261109">
+</head>
+<body>
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="m21 8-9 5-9-5 9-5 9 5Z"/><path d="m3 8 9 5 9-5v8l-9 5-9-5V8Z"/><path d="M12 13v8"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M14 5l1.5 2H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h4.5L10 5h4Z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></symbol>
+    <symbol id="i-building" viewBox="0 0 24 24"><path d="M3 21h18M6 21V5l6-2v18M18 21V9l-6-2"/><path d="M9 9v1M9 13v1M9 17v1M15 13v1M15 17v1"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.16.37.42.69.74.94.3.23.68.36 1.06.36h.09v4h-.09c-.38 0-.76.13-1.06.36-.32.25-.58.57-.74.94Z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M4 20h16"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7h-6V1M4 17h6v6"/><path d="M5.1 9a8 8 0 0 1 13.4-3L20 7M4 17l1.5 1A8 8 0 0 0 19 15"/></symbol>
+  </svg>
+
+  <section id="login-view" class="login-view">
+    <div class="login-visual">
+      <div class="brand-lockup"><span class="brand-mark"><svg><use href="#i-box"/></svg></span><strong>设备台账</strong></div>
+      <div class="login-visual-copy"><span class="eyebrow">ASSET OPERATIONS</span><h1>把设备资料、责任与风险放在同一张图上。</h1><p>统一管理设备全生命周期，权限从页面一直落实到接口、附件与导出。</p></div>
+      <div class="visual-board" aria-hidden="true"><div class="visual-row"><span></span><b></b><i></i></div><div class="visual-row"><span></span><b></b><i></i></div><div class="visual-row"><span></span><b></b><i></i></div></div>
+      <p class="login-foot">V1.0 · 公网安全架构 · 操作全程审计</p>
+    </div>
+    <div class="login-panel">
+      <form id="login-form" class="login-form">
+        <div><span class="eyebrow">WELCOME BACK</span><h2>登录管理工作台</h2><p>使用分配给你的账号进入系统</p></div>
+        <label>账号<input name="username" autocomplete="username" required></label>
+        <label>密码<div class="password-wrap"><input name="password" type="password" autocomplete="current-password" required><button type="button" class="plain-button" id="toggle-password">显示</button></div></label>
+        <label id="mfa-row">动态验证码<div class="mfa-wrap"><input name="mfaCode" inputmode="numeric" maxlength="6" placeholder="6位验证码"><button type="button" class="plain-button" id="demo-mfa" hidden>获取演示码</button></div></label>
+        <button class="button primary login-button" type="submit">安全登录</button>
+        <button class="button ghost" type="button" id="forgot-password">忘记密码</button>
+        <div class="demo-accounts" hidden><span>演示角色</span><button type="button" data-account="asset">资产管理员</button><button type="button" data-account="dept">部门管理员</button><button type="button" data-account="finance">财务</button><button type="button" data-account="staff">普通员工</button></div>
+        <p id="login-error" class="form-error"></p>
+      </form>
+    </div>
+  </section>
+
+  <div id="app-shell" class="app-shell" hidden>
+    <aside class="sidebar">
+      <div class="sidebar-brand"><span class="brand-mark"><svg><use href="#i-box"/></svg></span><span><strong>设备台账</strong><small>Asset Ledger</small></span></div>
+      <nav id="main-nav" class="main-nav">
+        <span class="nav-label">工作台</span>
+        <button data-page="dashboard" class="active"><svg><use href="#i-grid"/></svg>首页仪表盘</button>
+        <button data-page="devices"><svg><use href="#i-box"/></svg>设备台账</button>
+        <button data-page="quick"><svg><use href="#i-search"/></svg>扫码 / 快速查找</button>
+        <button data-page="reminders"><svg><use href="#i-bell"/></svg>维保与提醒</button>
+        <span class="nav-label admin-nav">管理配置</span>
+        <button data-page="departments" class="admin-nav"><svg><use href="#i-building"/></svg>部门管理</button>
+        <button data-page="dictionaries" class="admin-nav"><svg><use href="#i-list"/></svg>字典管理</button>
+        <button data-page="config" class="admin-nav"><svg><use href="#i-sliders"/></svg>自定义配置</button>
+        <button data-page="permissions" class="users-nav"><svg><use href="#i-users"/></svg>用户与权限</button>
+        <button data-page="audit" class="audit-nav"><svg><use href="#i-shield"/></svg>审计日志</button>
+        <button data-page="settings" class="settings-nav"><svg><use href="#i-settings"/></svg>系统设置</button>
+      </nav>
+      <div id="sidebar-user" class="sidebar-user"></div>
+    </aside>
+    <section class="workspace">
+      <header class="topbar">
+        <button id="mobile-menu" class="icon-button mobile-menu" title="打开菜单"><svg><use href="#i-list"/></svg></button>
+        <div class="global-search"><svg><use href="#i-search"/></svg><input id="global-search" placeholder="搜索设备编号、名称、SN、责任人…"><kbd>Enter</kbd></div>
+        <div class="top-actions"><span id="scope-badge" class="scope-badge"></span><button id="refresh-page" class="icon-button" title="刷新当前页面"><svg><use href="#i-refresh"/></svg></button><button id="logout-button" class="avatar-button" title="退出登录"><span id="avatar"></span></button></div>
+      </header>
+      <main id="page-root" class="page-root"></main>
+    </section>
+  </div>
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root"></div>
+  <script src="/xlsx.full.min.js"></script>
+  <script src="/qrcode.min.js"></script>
+  <script type="module" src="/app.js?v=1.1.20261109"></script>
+</body>
+</html>
