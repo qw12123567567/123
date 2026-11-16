@@ -35,10 +35,11 @@ try{
   const html=await readFile(path.join(app,'public/index.html'),'utf8');
   const script=await readFile(path.join(app,'public/app.js'),'utf8');
   const operationScript=await readFile(path.join(app,'public/operations.js'),'utf8');
+  const inventoryScripts=await Promise.all(['spares.js','device-types.js'].map((file)=>readFile(path.join(app,'public',file),'utf8')));
   const uiErrors=[];const virtualConsole=new VirtualConsole();virtualConsole.on('jsdomError',(error)=>uiErrors.push(error.message));
   const dom=new JSDOM(html,{url:base,runScripts:'outside-only',pretendToBeVisual:true,virtualConsole});
   const win=dom.window;win.fetch=(url,options)=>fetchApi(url,options);win.confirm=()=>false;
-  win.eval(operationScript.replace('export function createOperations','function createOperations')+'\n'+script.replace(/^import .*;\r?\n/gm,'')+'\nglobalThis.ledgerTest={state,openDeviceForm,openDevice,openUpload,renderPage,navigate,loadMeta};');
+  win.eval(operationScript.replace('export function createOperations','function createOperations')+'\n'+inventoryScripts.map((source)=>source.replace(/export function /g,'function ')).join('\n')+'\n'+script.replace(/^import .*;\r?\n/gm,'')+'\nglobalThis.ledgerTest={state,openDeviceForm,openDevice,openUpload,renderPage,navigate,loadMeta};');
   await until(()=>win.document.querySelector('#dashboard-add'),'Dashboard failed');
   win.document.querySelector('#dashboard-add').click();
   const form=win.document.querySelector('#device-form');
@@ -138,10 +139,23 @@ try{
   const ownApproval=await fetchApi(`/api/records/${approval.id}/approve`,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({approved:true})});assert.equal(ownApproval.status,403);passed.push('报废审批生效且申请人无法自行批准');
   await api('/api/login',{method:'POST',body:{username:'asset',password:'Asset@123'}});const assetUser=(await api('/api/bootstrap')).user;await api(`/api/records/${approval.id}/approve`,{method:'POST',headers:{'X-CSRF-Token':assetUser.csrfToken},body:{approved:true}});assert.equal((await api(`/api/devices/${auto.id}`)).device.status,'报废');passed.push('第二名管理员审批后应用报废状态');
   await api('/api/login',{method:'POST',body:{username:'admin',password:'Admin@123',mfaCode:(await api('/api/demo-mfa')).code}});const adminFinal=(await api('/api/bootstrap')).user;headers['X-CSRF-Token']=adminFinal.csrfToken;win.ledgerTest.state.user=adminFinal;
-  for(const page of ['devices','departments','dictionaries','config','permissions','audit','reminders','settings','quick']){
+  for(const page of ['devices','spares','device-types','departments','dictionaries','config','permissions','audit','reminders','settings','quick']){
     win.ledgerTest.state.page=page;await win.ledgerTest.renderPage();assert.ok(win.document.querySelector('#page-root h1'),`${page} must render`);
   }
-  passed.push('全部十个导航页面渲染与真实接口加载');
+  passed.push('全部十二个导航页面渲染与真实接口加载');
+  win.ledgerTest.state.page='spares';await win.ledgerTest.renderPage();win.document.querySelector('#spares-add').click();
+  const spareForm=win.document.querySelector('#spares-form');spareForm.querySelector('[name="code"]').value='UI-SPARE-1';spareForm.querySelector('[name="name"]').value='界面验收轴承';spareForm.querySelector('[name="quantity"]').value='2.5';spareForm.querySelector('[name="min_stock"]').value='2';
+  win.document.querySelector('#spares-parameter-add').click();win.document.querySelector('[data-spares-parameter-name]').value='待删除参数';win.document.querySelector('#spares-parameter-add').click();
+  const parameterRows=spareForm.querySelectorAll('[data-spares-parameter-row]');parameterRows[1].querySelector('[data-spares-parameter-name]').value='内径';parameterRows[1].querySelector('[data-spares-parameter-value]').value='25';parameterRows[1].querySelector('[data-spares-parameter-unit]').value='mm';parameterRows[0].querySelector('[data-spares-parameter-remove]').click();
+  win.document.querySelector('#spares-save').click();await until(()=>win.document.querySelector('#spares-edit'),'Spare creation must finish');
+  let spareSaved=(await api('/api/spares?q=UI-SPARE-1')).rows[0];assert.deepEqual(spareSaved.parameters,[{name:'内径',value:'25',unit:'mm'}]);
+  win.document.querySelector('#spares-edit').click();win.document.querySelector('[data-spares-parameter-value]').value='30';win.document.querySelector('#spares-parameter-add').click();
+  const secondParameter=win.document.querySelectorAll('[data-spares-parameter-row]')[1];secondParameter.querySelector('[data-spares-parameter-name]').value='游隙';secondParameter.querySelector('[data-spares-parameter-value]').value='C3';win.document.querySelector('#spares-save').click();await until(()=>win.document.querySelector('#spares-detail-out'),'Spare parameter edit must finish');
+  spareSaved=(await api(`/api/spares/${spareSaved.id}`)).part;assert.equal(spareSaved.parameters[0].value,'30');assert.equal(spareSaved.parameters[1].value,'C3');assert.equal(spareSaved.quantity,2.5);
+  win.document.querySelector('#spares-detail-out').click();win.document.querySelector('#spares-movement-form [name="quantity"]').value='1';win.document.querySelector('#spares-movement-form [name="reason"]').value='检修验收领用';win.document.querySelector('#spares-movement-save').click();await until(()=>win.document.querySelector('#spares-edit'),'Spare movement must finish');
+  assert.equal((await api(`/api/spares/${spareSaved.id}`)).part.quantity,1.5);win.document.querySelector('#modal-root [data-close]').click();passed.push('DOM新增删除修改自定义备件参数、保存资料及出库流水');
+  win.ledgerTest.state.page='device-types';await win.ledgerTest.renderPage();win.document.querySelector('#add-device-type').click();win.document.querySelector('#device-type-form [name="name"]').value='电机验收类型';win.document.querySelector('#device-type-form [name="code"]').value='VERIFY-MOTOR';win.document.querySelector('#save-device-type').click();await until(()=>win.document.querySelector('#page-root').textContent.includes('电机验收类型'),'Device type creation must refresh metadata');
+  win.ledgerTest.openDeviceForm();assert.ok([...win.document.querySelectorAll('#device-form [name="category"] option')].some((option)=>option.value==='电机验收类型'));win.document.querySelector('#modal-root [data-close]').click();passed.push('DOM自定义设备类型后立即进入设备分类选项');
   const conditional=await api('/api/custom-fields',{method:'POST',headers,body:{code:'conditional_note',name:'条件必填备注',field_type:'text',category:'通用',required:true,settings:{visibleWhen:{field:'test_parameter',equals:'show'}}}});assert.ok(conditional.id);await api('/api/config/publish',{method:'POST',headers});await win.ledgerTest.loadMeta();win.ledgerTest.openDeviceForm();
   const conditionalInput=win.document.querySelector('[name="custom_conditional_note"]');assert.equal(conditionalInput.disabled,true);const controller=win.document.querySelector('[name="custom_test_parameter"]');controller.value='show';controller.dispatchEvent(new win.Event('change',{bubbles:true}));assert.equal(conditionalInput.disabled,false);assert.equal(conditionalInput.required,true);win.document.querySelector('[data-close]').click();passed.push('表单条件显隐与隐藏必填校验联动');
   const exportJob=await api('/api/export-jobs',{method:'POST',headers,body:{filters:{q:'BULK-'}}});await until(async()=>{const job=await api(`/api/export-jobs/${exportJob.id}`);return job.status==='ready';},'Export job must complete');const asyncDownload=await fetchApi(`/api/export-jobs/${exportJob.id}/download`);assert.equal(asyncDownload.status,200);assert.match(await asyncDownload.text(),/BULK-1000/);passed.push('异步导出任务生成并鉴权下载1000台设备');

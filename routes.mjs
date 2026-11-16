@@ -11,6 +11,8 @@ import { business,configuration,nextDeviceCode } from './business.mjs';
 import { publicAccount,reminderRows } from './notifications.mjs';
 import { createBackup,listBackups } from './backups.mjs';
 import { restoreBackup } from './backups.mjs';
+import { spareParts } from './spares.mjs';
+import { deviceTypes,createDeviceType,updateDeviceType } from './device-types.mjs';
 
 const attempts=new Map();
 const now=()=>new Date().toISOString();
@@ -121,7 +123,10 @@ function validateDevice(input,user,id=0){
     if(field.field_type==='device'&&!db.prepare('SELECT 1 FROM devices WHERE code=? AND deleted=0').get(String(value)))errors.push(`${field.name}引用的设备不存在`);
   }
   if(input.department_id&&!db.prepare("SELECT id FROM departments WHERE id=? AND status='active'").get(Number(input.department_id)))errors.push('使用部门不存在或已停用');
-  for(const [type,value] of [['category',input.category],['status',input.status||'在用']])if(value&&!db.prepare("SELECT id FROM dictionary_items WHERE dict_type=? AND name=? AND status='active'").get(type,value))errors.push(`${type==='category'?'分类':'状态'}不在有效字典中`);
+  for(const [type,value] of [['category',input.category],['status',input.status||'在用']]){
+    const unchangedCategory=type==='category'&&id&&db.prepare('SELECT id FROM devices WHERE id=? AND category=?').get(id,value);
+    if(value&&!unchangedCategory&&!db.prepare("SELECT id FROM dictionary_items WHERE dict_type=? AND name=? AND status='active'").get(type,value))errors.push(`${type==='category'?'分类':'状态'}不在有效字典中`);
+  }
   for(const field of [...PRICE_FIELDS,'maintenance_cycle','calibration_cycle'])if(input[field]!=null&&input[field]!==''&&(!Number.isFinite(Number(input[field]))||Number(input[field])<0))errors.push(`${field}必须为非负数`);
   for(const field of ['purchase_date','start_date','warranty_end','next_maintenance','next_calibration','scrap_date'])if(input[field]&&(!/^\d{4}-\d{2}-\d{2}$/.test(input[field])||Number.isNaN(Date.parse(input[field]))||new Date(input[field]).toISOString().slice(0,10)!==input[field]))errors.push(`${field}日期无效，需使用YYYY-MM-DD`);
   return errors;
@@ -163,6 +168,8 @@ export async function api(req,res,url){
     const admin=db.prepare("SELECT mfa_secret FROM users WHERE username='admin'").get();return json(res,200,{code:totp(admin.mfa_secret),expiresIn:30-(Math.floor(Date.now()/1000)%30)});
   }
   const user=requireUser(req,res);if(!user)return;
+  const sparesResult=await spareParts(req,res,url,user);if(sparesResult!==false)return sparesResult;
+  const typesResult=await deviceTypes(req,res,url,user);if(typesResult!==false)return typesResult;
   const businessResult=await business(req,res,url,user);if(businessResult!==false)return businessResult;
   if(req.method==='POST'&&url.pathname==='/api/export-jobs'){
     if(!user.export_data)return fail(res,403,'无导出权限');const body=await bodyJson(req);const id=randomToken(16);const query=new URL('/api/export','http://localhost');for(const [key,value] of Object.entries(body.filters||{}))if(value!=null)query.searchParams.set(key,String(value));filters(query,user);
@@ -321,6 +328,7 @@ export async function api(req,res,url){
   }
   if(req.method==='POST'&&url.pathname==='/api/dictionaries'){
     if(!user.manage_config)return fail(res,403,'无字典配置权限');const body=await bodyJson(req);if(!body.dict_type||!body.code||!body.name)return fail(res,400,'字典类型、编码和名称必填');const department=user.role_code==='department_admin'?user.department_id:(body.department_id||null);
+    if(body.dict_type==='category')return json(res,201,createDeviceType(req,user,body));
     if(body.dict_type==='status')return fail(res,400,'底层状态固定，请在状态流配置中设置转换规则');
     if(!['category','location','vendor','brand'].includes(body.dict_type))return fail(res,400,'字典类型无效');
     if(db.prepare('SELECT id FROM dictionary_items WHERE dict_type=? AND code=? AND department_id IS ?').get(body.dict_type,body.code,department))return fail(res,400,'字典编码已存在');
@@ -328,7 +336,9 @@ export async function api(req,res,url){
   }
   const dictMatch=url.pathname.match(/^\/api\/dictionaries\/(\d+)$/);
   if(dictMatch&&req.method==='PUT'){
-    if(!user.manage_config)return fail(res,403,'无字典配置权限');const id=Number(dictMatch[1]);const old=db.prepare('SELECT * FROM dictionary_items WHERE id=?').get(id);if(!old)return fail(res,404,'字典项不存在');if(user.role_code==='department_admin'&&old.department_id!==user.department_id)return fail(res,403,'只能维护本部门字典');const body=await bodyJson(req);
+    if(!user.manage_config)return fail(res,403,'无字典配置权限');const id=Number(dictMatch[1]);const old=db.prepare('SELECT * FROM dictionary_items WHERE id=?').get(id);if(!old)return fail(res,404,'字典项不存在');const body=await bodyJson(req);
+    if(old.dict_type==='category')return json(res,200,updateDeviceType(req,user,id,body));
+    if(user.role_code==='department_admin'&&old.department_id!==user.department_id)return fail(res,403,'只能维护本部门字典');
     if(old.dict_type==='status'&&(body.name&&body.name!==old.name||body.status==='disabled'))return fail(res,400,'系统底层状态不可重命名或停用');
     db.prepare('UPDATE dictionary_items SET name=?,sort_order=?,status=? WHERE id=?').run(body.name||old.name,Number(body.sort_order??old.sort_order),body.status||old.status,id);audit(req,user,'update','dictionary',id,`修改字典项：${old.name}`,old,body);return json(res,200,{ok:true});
   }

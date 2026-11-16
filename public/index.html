@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>新疆紫金黄金设备台账</title>
-  <link rel="stylesheet" href="/styles.css?v=1.2.20261113">
+  <link rel="stylesheet" href="/styles.css?v=1.3.20261117">
 </head>
 <body>
   <svg class="icon-sprite" aria-hidden="true">
@@ -56,10 +56,12 @@
         <span class="nav-label">工作台</span>
         <button data-page="dashboard" class="active"><svg><use href="#i-grid"/></svg>首页仪表盘</button>
         <button data-page="devices"><svg><use href="#i-box"/></svg>设备台账</button>
+        <button data-page="spares"><svg><use href="#i-box"/></svg>备品备件台账</button>
         <button data-page="quick"><svg><use href="#i-search"/></svg>扫码 / 快速查找</button>
         <button data-page="reminders"><svg><use href="#i-bell"/></svg>维保与提醒</button>
         <span class="nav-label admin-nav">管理配置</span>
         <button data-page="departments" class="admin-nav"><svg><use href="#i-building"/></svg>部门管理</button>
+        <button data-page="device-types" class="admin-nav"><svg><use href="#i-list"/></svg>设备类型</button>
         <button data-page="dictionaries" class="admin-nav"><svg><use href="#i-list"/></svg>字典管理</button>
         <button data-page="config" class="admin-nav"><svg><use href="#i-sliders"/></svg>自定义配置</button>
         <button data-page="permissions" class="users-nav"><svg><use href="#i-users"/></svg>用户与权限</button>
@@ -81,6 +83,6 @@
   <div id="toast-root" class="toast-root"></div>
   <script src="/xlsx.full.min.js"></script>
   <script src="/qrcode.min.js"></script>
-  <script type="module" src="/app.js?v=1.2.20261113"></script>
+  <script type="module" src="/app.js?v=1.3.20261117"></script>
 </body>
 </html>

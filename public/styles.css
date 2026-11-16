@@ -93,3 +93,7 @@ textarea{min-height:90px;resize:vertical}
 .toast{border-left-color:var(--brand-gold);background:#252321}
 .spinner{border-color:#e6e3da;border-top-color:var(--brand-gold-dark)}
 .column-resize:hover{background:#e5c55e}
+.spares-parameter-row{grid-template-columns:minmax(0,1.1fr) minmax(0,1.5fr) minmax(0,.7fr) auto;align-items:end;padding:12px 0;border-bottom:1px solid var(--line-2)}
+.spares-parameter-row label{min-width:0}.spares-parameter-row .button{min-height:38px}.spares-notes{overflow-wrap:anywhere}
+@media(max-width:760px){.spares-parameter-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+@media(max-width:440px){.spares-parameter-row{grid-template-columns:minmax(0,1fr)}}
